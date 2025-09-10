@@ -1,5 +1,6 @@
 module Parser where
 import Control.Applicative
+import Control.Monad
 import Data.List (nub)
 import Data.Char
 
@@ -72,13 +73,17 @@ string = traverse char
 oneOf :: Eq i => [i] -> Parser i e i
 oneOf xs = token (ExpectedOf xs) (\x -> any (== x) xs)
 
--- parser a digit
-digit :: Parser Char e Int
-digit = (\x -> ord(x) - ord('0')) <$> oneOf ['0'..'9']
+-- trys to parse one of the parsers
+choice :: Alternative f => [f a] -> f a
+choice = asum
 
--- parse a natural number
-natural :: Eq e => Parser Char e Int
-natural = foldl (\acc x -> 10 * acc + x) 0 <$> (some digit)
+-- parser a digit
+digit :: Parser Char e Char
+digit = oneOf ['0'..'9']
+
+-- parse a natural number. leading left zeros allowed 0001
+natural :: Eq e => Parser Char e [Char]
+natural = some digit
 
 -- parse the exact number of the other parser
 exact :: Alternative f => Int -> f a -> f [a]
@@ -101,6 +106,34 @@ sepBy p sep = liftA2 (:) p (many (sep *> p))
 -- can end with both parsers
 sepBy1 :: Alternative f => f a -> f b -> f [a]
 sepBy1 p sep = liftA2 (:) p (some (sep *> p))
+
+-- Sorround functions
+surround l r xs= l ++ xs ++ r
+s'  = surround "[" "]"
+s'' = surround "<" ">"
+
+class Treeable a b where
+  node :: a -> b -> a -> a
+
+instance Treeable [Char] [Char] where
+  node lhs op rhs = s' (lhs ++ op ++ rhs)
+
+-- Parse a binary operation in right associative order
+rightBinOpExpr :: (Eq i, Eq e, Treeable a b) => Parser i e a -> Parser i e b -> Parser i e a
+-- E := T <op> E | T
+rightBinOpExpr term op = join <$> (term <~> (op <~> (rightBinOpExpr term op <|> term))) <|> term
+  where
+    join (lhs, (op, rhs)) = node lhs op rhs
+
+-- Parse a binary operation in left associative order
+-- E := T (E <op>)*
+leftBinOpExpr :: (Eq i, Eq e, Treeable a b) => Parser i e a -> Parser i e b -> Parser i e a
+leftBinOpExpr term op =
+  let
+    fold_ (t, ts) = foldl (\lhs (op, rhs) -> node lhs op rhs) t ts
+  in fold_ <$> (term <~> many (op <~> term))
+
+-- many, some, option, optional defined in Alternative
 
 -- =============== Result Manipulators =====================
 -- less than <*, <*>, *> so we can still chain but the <* is done first
@@ -143,6 +176,19 @@ instance Monad (Parser i e) where
   Parser p >>= k = Parser $ \input offset -> do
     (output, offset', rest) <- p input offset
     runParser (k output) rest offset'
+
+-- OR with backtraking. Be careful, recursion with to the left
+(<||>) :: (Eq i, Eq e) => Parser i e a -> Parser i e a -> Parser i e a
+Parser l <||> Parser r = Parser $ \input offset ->
+  case l input offset of
+    Left err ->
+      case r input offset of
+        Left err' -> Left $ nub $ err <> err'
+        Right result2 -> Right result2
+    Right result1@(_, off1, _) ->
+      case r input offset of
+        Left err' -> Right result1
+        Right result2@(_, off2, _) -> Right (if off1 > off2 then result1 else result2)
 
 instance (Eq i, Eq e) => Alternative (Parser i e) where
   empty = Parser $ \_ offset -> Left [Error offset Empty]
