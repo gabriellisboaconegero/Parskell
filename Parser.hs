@@ -3,6 +3,7 @@ import Control.Applicative
 import Control.Monad
 import Data.List (nub)
 import Data.Char
+import Data.Maybe
 
 type Offset = Int
 
@@ -107,6 +108,18 @@ sepBy p sep = liftA2 (:) p (many (sep *> p))
 sepBy1 :: Alternative f => f a -> f b -> f [a]
 sepBy1 p sep = liftA2 (:) p (some (sep *> p))
 
+-- combine parser to alternate between them
+-- need to end with first parser, the separator
+-- can be at the end
+sepEndBy :: Alternative f => f a -> f b -> f [a]
+sepEndBy p sep = sepBy p sep <* optional sep
+
+-- combine parser to alternate between them
+-- can end with both parsers, the separator
+-- can be at the end
+sepEndBy1 :: Alternative f => f a -> f b -> f [a]
+sepEndBy1 p sep = sepBy1 p sep <* optional sep
+
 -- Sorround functions
 surround l r xs= l ++ xs ++ r
 s'  = surround "[" "]"
@@ -133,7 +146,9 @@ leftBinOpExpr term op =
     fold_ (t, ts) = foldl (\lhs (op, rhs) -> node lhs op rhs) t ts
   in fold_ <$> (term <~> many (op <~> term))
 
--- many, some, option, optional defined in Alternative
+-- many, some, optional defined in Alternative
+option :: Alternative f => a -> f a -> f a
+option fallback f = fromMaybe fallback <$> optional f
 
 -- =============== Result Manipulators =====================
 -- less than <*, <*>, *> so we can still chain but the <* is done first
