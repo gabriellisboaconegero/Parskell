@@ -34,6 +34,7 @@ aFollowedByb = do
   bs <- exact (length as) (char 'b')
   return (as, bs)
 
+-- Pasing algebraic expressions with naturals, "+", "*" and "^"
 data ASTInt   = Leaf Int | Node String ASTInt ASTInt
   deriving (Eq)
 data Operator = Op String
@@ -45,27 +46,66 @@ instance Show ASTInt where
 instance Treeable ASTInt Operator where
   node lhs (Op o) rhs = Node o lhs rhs
 
-sumExpr :: Parser Char Int ASTInt
-sumExpr = leftBinOpExpr multExpr (Op <$> string "+")
+-- sumExpr :: Parser Char Int ASTInt
+-- sumExpr = leftBinOpExpr multExpr (Op <$> string "+")
+sumExpr :: Parser Char Int [Char]
+sumExpr = leftBinOpExpr multExpr (string "+")
 
-multExpr :: Parser Char Int ASTInt
-multExpr = leftBinOpExpr expExpr (Op <$> string "*")
+-- multExpr :: Parser Char Int ASTInt
+-- multExpr = leftBinOpExpr expExpr (Op <$> string "*")
+multExpr :: Parser Char Int [Char]
+multExpr = leftBinOpExpr expExpr (string "*")
 
-expExpr :: Parser Char Int ASTInt
-expExpr = rightBinOpExpr term (Op <$> string "^")
+-- expExpr :: Parser Char Int ASTInt
+-- expExpr = rightBinOpExpr terM (Op <$> string "^")
+expExpr :: Parser Char Int [Char]
+expExpr = rightBinOpExpr terM (string "^")
 
-term :: Parser Char Int ASTInt
--- term = natural
-term = (Leaf . read) <$> natural <|> (string "(" *> sumExpr <* string ")")
--- sumExpr :: Parser Char Int [Char]
--- sumExpr = leftBinOpExpr multExpr (string "+")
+-- terM :: Parser Char Int ASTInt
+-- terM = (Leaf . read) <$> natural <|> (string "(" *> sumExpr <* string ")")
+terM :: Parser Char Int [Char]
+terM = natural <|> (string "(" *> sumExpr <* string ")")
 
--- multExpr :: Parser Char Int [Char]
--- multExpr = leftBinOpExpr expExpr (string "*")
+-- Parse a language with miffix operators, based on the following grammar
+-- expr   ::= anD | eq | term | fac | if' | closed
+-- and'   ::= (and'' &)+ and''
+-- and''  ::= eq | closed
+-- eq     ::= eq' == eq'
+-- eq'    ::= term | fac | closed
+-- term   ::= closed ((+ | -) closed)+
+-- fac    ::= closed !+
+-- if'    ::= (if expr then expr else)+ closed
+-- closed ::= b | n | ( expr )
+-- Reference: https://www.cse.chalmers.se/~nad/publications/danielsson-norell-mixfix.pdf
 
--- expExpr :: Parser Char Int [Char]
--- expExpr = rightBinOpExpr term (string "^")
+expr :: Parser Char Int [Char]
+expr = and' <|> eq <|> term <|> fac <|> if' <|> closed
 
--- term :: Parser Char Int [Char]
--- -- term = natural
--- term = s'' <$> natural <|> (string "(" *> sumExpr <* string ")")
+and' :: Parser Char Int [Char]
+and' = rightBinOpExpr1 and'' (string "&")
+
+and'' :: Parser Char Int [Char]
+and'' = eq <|> closed
+
+eq :: Parser Char Int [Char]
+eq = (s' <$> eq') <++> (string "==") <++> (s' <$> eq')
+
+eq' :: Parser Char Int [Char]
+eq' = term <|> fac <|> closed
+
+term :: Parser Char Int [Char]
+term = leftBinOpExpr1 closed (string "+" <|> string "-")
+
+fac :: Parser Char Int [Char]
+fac = closed <++> some (char '!')
+
+-- if'    ::= (if expr then expr else)+ closed
+if' :: Parser Char Int [Char]
+if' =
+  let
+    fold_ (ts, t) = foldr (\((((i, e0), t), e1), el) rhs -> s'' (i ++ s' e0 ++ t ++ s' e1 ++ el ++ s' rhs)) t ts
+  in fold_ <$> (some (string "if" <~> expr <~> string "then" <~> expr <~> string "else") <~> closed)
+
+-- closed ::= b | n | ( expr )
+closed :: Parser Char Int [Char] 
+closed = natural <|> (string "(" <++> expr <++> string ")")
