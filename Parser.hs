@@ -211,17 +211,26 @@ instance Monad (Parser i e) where
     runParser (k output) rest offset'
 
 -- OR with backtraking. Be careful, recursion with to the left
-(<||>) :: (Eq i, Eq e) => Parser i e a -> Parser i e a -> Parser i e a
+-- (<||>) :: (Eq i, Eq e) => Parser i e a -> Parser i e a -> Parser i e a
+-- Parser l <||> Parser r = Parser $ \input offset ->
+--   case l input offset of
+--     Left err ->
+--       case r input offset of
+--         Left err' -> Left $ nub $ err <> err'
+--         Right result2 -> Right result2
+--     Right result1@(_, off1, _) ->
+--       case r input offset of
+--         Left err' -> Right result1
+--         Right result2@(_, off2, _) -> Right (if off1 > off2 then result1 else result2)
+
+(<||>) :: (Eq i, Eq e) => Parser i e a -> Parser i e b -> Parser i e (Either a b)
 Parser l <||> Parser r = Parser $ \input offset ->
   case l input offset of
     Left err ->
       case r input offset of
         Left err' -> Left $ nub $ err <> err'
-        Right result2 -> Right result2
-    Right result1@(_, off1, _) ->
-      case r input offset of
-        Left err' -> Right result1
-        Right result2@(_, off2, _) -> Right (if off1 > off2 then result1 else result2)
+        Right (b, off, rest) -> Right (Right b, off, rest)
+    Right (a, off, rest) -> Right (Left a, off, rest)
 
 instance (Eq i, Eq e) => Alternative (Parser i e) where
   empty = Parser $ \_ offset -> Left [Error offset Empty]
