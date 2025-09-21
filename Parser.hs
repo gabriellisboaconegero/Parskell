@@ -123,6 +123,9 @@ sepEndBy p sep = sepBy p sep <* optional sep
 sepEndBy1 :: Alternative f => f a -> f b -> f [a]
 sepEndBy1 p sep = sepBy1 p sep <* optional sep
 
+betweenC :: Parser Char e a -> Parser Char e b -> Parser Char e c -> Parser Char e b
+betweenC open p close = open *> p <* close
+
 -- Sorround functions
 surround l r xs= l ++ xs ++ r
 s'  = surround "[" "]"
