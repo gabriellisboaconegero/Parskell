@@ -86,6 +86,9 @@ digit = oneOf ['0'..'9']
 natural :: Eq e => Parser Char e [Char]
 natural = some digit
 
+integer :: Eq e => Parser Char e [Char]
+integer = natural <|> (char '-' <:> natural)
+
 -- parse the exact number of the other parser
 exact :: Alternative f => Int -> f a -> f [a]
 exact 0 p = pure []
