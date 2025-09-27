@@ -39,6 +39,9 @@ newtype Parser i e a = Parser
   { runParser :: [i] -> Offset -> Either [Error i e] (a, Offset, [i])
   }
 
+buildParserWithError :: e -> Parser i e a
+buildParserWithError err = Parser $ \_ offset -> Left [Error offset $ CustomError err]
+
 parse :: Parser i e a -> [i] -> Either [Error i e] (a, Offset, [i])
 parse p = (flip $ runParser p) 0
 

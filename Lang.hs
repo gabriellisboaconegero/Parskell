@@ -1,4 +1,4 @@
-{-# LANGUAGE MultilineStrings #-}
+module Lang where
 import Parser
 import Control.Applicative
 import Data.Char
@@ -19,40 +19,11 @@ import Data.Maybe
 -- funcApp ::= closed (' '* '.' ' '* closed)+
 -- closed ::= ID | INT | STRINGLIT | | '(' expr ')'
 
-a = """
-lamb a =>
-  lamb b =>
-    a + b;
-
-lamb c =>
-  lamb d =>
-    c + d + e * f + g;
-
-lamb f =>
-  +. (/. f. -1). 5;
-
-lamb f =>
-  +. (-. (-. f. -4). 1). 5;
-
-lamb f =>
-  lamb a => +. a;
-
-lamb f =>
-  lamb a =>
-  +. (f. (g. a)). 5;
-
-lamb f =>
-  x| 4. (lamb a => f. a);
-
-f. a + g. 5 == 0 && x || a - 6 * 4 && 34 == k;
-+. 4;
-
-lamb s => lamb s_ => +. s. (+. "pedro + lucas". s_);
-"""
-
 type Identifier = String
 
-type ParseError = Int
+data ParseError = ReservedWord String
+  | Generic
+  deriving (Show, Eq)
 
 -- ======================= Expressions ========================
 data Expr = Var Identifier
@@ -77,6 +48,11 @@ instance Treeable Expr String where
   node lhs "." rhs = FunctionApp lhs rhs
   node lhs op rhs = FunctionApp (FunctionApp (toBuiltInOp op) lhs) rhs
 -- ======================= Expressions ========================
+
+-- ======================= Rserverd Words =====================
+reservedWords :: [String]
+reservedWords = ["lamb"]
+-- ======================= Rserverd Words =====================
 
 -- ======================= Binary Operators ========================
 data Operator = Sum | Sub
@@ -169,14 +145,14 @@ exprP = lambdaP <|> term <|> closedP
 lambdaP :: Parser Char ParseError Expr
 lambdaP = LambdaAbstraction <$> (string "lamb" *> ws *> identifierP <* ws <* string "=>" <* ws) <*> exprP
 
-term :: Parser Char Int Expr
+term :: Parser Char ParseError Expr
 term = head $ binaryOperatorsTableP funcAppP groupedBinaryOps
 
-funcAppP :: Parser Char Int Expr
+funcAppP :: Parser Char ParseError Expr
 funcAppP = leftBinOpExpr1 funcAppP' (betWs $ string ".") <|> closedP
 
-funcAppP' :: Parser Char Int Expr
-funcAppP' = (toBuiltInOp <$> builtInP) <|> closedP
+funcAppP' :: Parser Char ParseError Expr
+funcAppP' = closedP <|> (toBuiltInOp <$> builtInP)
 
 closedP :: Parser Char ParseError Expr
 closedP = (IntegerLiteral <$> literalIntegerP) <|> (Var <$> identifierP) <|> (StringLiteral <$> stringLitP) <|> parentsC exprP
@@ -184,7 +160,12 @@ closedP = (IntegerLiteral <$> literalIntegerP) <|> (Var <$> identifierP) <|> (St
 
 -- ============== GENERAL PARSERS ====================
 identifierP :: Parser Char ParseError Identifier
-identifierP = satisfy isAlpha <:> many (satisfy isAlphaNum <|> char '_')
+identifierP = do
+  r <- satisfy isAlpha <:> many (satisfy isAlphaNum <|> char '_')
+  if r `elem` reservedWords then
+    buildParserWithError $ ReservedWord r
+  else
+    return r
 
 literalIntegerP :: Parser Char ParseError Int
 literalIntegerP = read <$> integer
