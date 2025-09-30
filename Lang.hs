@@ -1,3 +1,4 @@
+{-# LANGUAGE MultilineStrings #-}
 module Lang where
 import Parser
 import Control.Applicative
@@ -30,7 +31,7 @@ data Expr = Var Identifier
   | IntegerLiteral Int
   | StringLiteral String
   | FunctionApp Expr Expr
-  | Op Operator
+  | Op OperatorName
   | LambdaAbstraction Identifier Expr
   deriving (Eq)
 
@@ -44,9 +45,9 @@ instance Show Expr where
       show' (Op o)                  = show o
       show' (LambdaAbstraction i e) = show i ++ "-> " ++ show e
 
-instance Treeable Expr String where
-  node lhs "." rhs = FunctionApp lhs rhs
-  node lhs op rhs = FunctionApp (FunctionApp (toBuiltInOp op) lhs) rhs
+instance Treeable Expr Operator where
+  node lhs (FuncApp, _) rhs = FunctionApp lhs rhs
+  node lhs (opName, mixfixExprs) rhs = foldl (\acc x -> FunctionApp acc x) (Op opName) ([lhs] ++ mixfixExprs ++ [rhs])
 -- ======================= Expressions ========================
 
 -- ======================= Rserverd Words =====================
@@ -55,11 +56,16 @@ reservedWords = ["lamb"]
 -- ======================= Rserverd Words =====================
 
 -- ======================= Binary Operators ========================
-data Operator = Sum | Sub
-  | Mult | Div
-  | And | Or | Equals
-  | Null
+data OperatorName = Sum | Sub
+  | Mult | Div | Mod
+  | And | Or | Equals | If
+  | FuncApp | Null
   deriving (Show, Eq)
+
+-- The operator name defined and the list of inner expressions. That means
+-- that all operators have at least 2 operands, inner list is empty. If inner list
+-- is inhabited then the operator has more than 2 operands. This type defines an binary operator that acctually is a n-tuple operator.
+type Operator = (OperatorName, [Expr])
 
 data Associativity = LeftAssoc | RightAssoc
   deriving (Show, Eq)
@@ -70,20 +76,20 @@ instance Ord Associativity where
   compare a b                  = EQ
 
 data BinaryOperatorDef = BinOpDef
-  { op    :: Operator,
-    str   :: String,
-    prec  :: Int,
-    assoc :: Associativity
+  { getOp    :: OperatorName,
+    getStr   :: String,
+    getPrec  :: Int,
+    getAssoc :: Associativity
   }
   deriving (Show, Eq)
 
 instance Ord BinaryOperatorDef where
   compare a b = 
     let
-      pa = prec a
-      pb = prec b
-      aa = assoc a
-      ab = assoc b
+      pa = getPrec a
+      pb = getPrec b
+      aa = getAssoc a
+      ab = getAssoc b
     in if pa == pb then compare aa ab else compare pa pb 
 
 builtInBinaryOperators :: [BinaryOperatorDef]
@@ -93,8 +99,11 @@ builtInBinaryOperators = [
   BinOpDef And    "&&" 07 LeftAssoc,
   BinOpDef Or     "||" 06 LeftAssoc,
   BinOpDef Equals "==" 08 LeftAssoc,
+  BinOpDef Mod    "%"  15 LeftAssoc,
   BinOpDef Mult   "*"  15 LeftAssoc,
   BinOpDef Div    "/"  15 LeftAssoc]
+
+funcAppBinaryOpDef = BinOpDef FuncApp "." 99 RightAssoc
 
 -- Group all binaryoperators in groups that contain the same precedence and associativity
 -- ordered by precedence than associativity
@@ -105,16 +114,17 @@ groupedBinaryOps =
     grouped = groupBy (\a b -> (a >= b) && (a <= b)) sorted
   in grouped
 
-binaryOperatorP :: [BinaryOperatorDef] -> Parser Char ParseError String
-binaryOperatorP = choice . map (\bop -> string $ str bop)
+binaryOperatorP :: [BinaryOperatorDef] -> Parser Char ParseError Operator
+binaryOperatorP binOpsD = choice $ map (\opD -> (\_ -> (getOp opD, [])) <$> (stringWs $ getStr opD)) binOpsD
 
-binaryOperatorsTableP :: Parser Char ParseError Expr -> [[BinaryOperatorDef]] -> [Parser Char ParseError Expr]
-binaryOperatorsTableP closed (x:xs) = foldl foldF [leftBinOpExpr closed (toStrP x)] xs
+binaryOperatorsTableP :: Parser Char ParseError Expr -> [[BinaryOperatorDef]] -> Parser Char ParseError Expr
+binaryOperatorsTableP closed binOps = foldl foldF closed binOps
   where
-    foldF acc x
-      | assoc (head x) == LeftAssoc = (leftBinOpExpr (head acc) (toStrP x)):acc
-      | assoc (head x) == RightAssoc = (rightBinOpExpr (head acc) (toStrP x)):acc
-    toStrP = betWs . binaryOperatorP
+    getAssocBinaryP x
+      | getAssoc x == LeftAssoc  = leftBinOpExpr
+      | getAssoc x == RightAssoc = rightBinOpExpr
+
+    foldF hc x@(hx:_) = (getAssocBinaryP hx) hc (binaryOperatorP x)
 -- ======================= Binary Operators ========================
 
 -- ============== UTILS ====================
@@ -124,15 +134,18 @@ ws = const () <$> many (satisfy isSpace)
 betWs :: Parser Char ParseError a -> Parser Char ParseError a
 betWs p = betweenC ws p ws
 
+stringWs :: String -> Parser Char ParseError String
+stringWs = betWs . string
+
 parentsC :: Parser Char ParseError a -> Parser Char ParseError a
 parentsC p = betweenC (betWs $ char '(') p (betWs $ char ')')
 
-toBuiltInOp :: String -> Expr
-toBuiltInOp a
-  | isNothing f =  error $ "Expected operator, but got " ++ show a 
-  | otherwise   = Op $ fromMaybe Null $ do bop <- f; return (op bop)
-  where
-    f = find (\bop -> str bop == a) builtInBinaryOperators
+-- toBuiltInOp :: String -> Expr
+-- toBuiltInOp a
+--   | isNothing f =  error $ "Expected operator, but got " ++ show a 
+--   | otherwise   = Op $ fromMaybe Null $ do bop <- f; return (getOp bop)
+--   where
+--     f = find (\bop -> str bop == a) builtInBinaryOperators
 -- ============== UTILS ====================
 
 -- ============== EXPR PARSERS ====================
@@ -140,19 +153,22 @@ finalP :: Parser Char ParseError [Expr]
 finalP = sepEndBy exprP (betWs $ char ';')
 
 exprP :: Parser Char ParseError Expr
-exprP = lambdaP <|> term <|> closedP
+exprP = lambdaP <|> ifThenElseP <|> closedP
 
 lambdaP :: Parser Char ParseError Expr
 lambdaP = LambdaAbstraction <$> (string "lamb" *> ws *> identifierP <* ws <* string "=>" <* ws) <*> exprP
 
+ifThenElseP :: Parser Char ParseError Expr
+ifThenElseP = rightBinOpExpr term ((\x -> (If, [x])) <$> (stringWs "?" *> exprP <* stringWs ":"))
+
 term :: Parser Char ParseError Expr
-term = head $ binaryOperatorsTableP funcAppP groupedBinaryOps
+term = binaryOperatorsTableP funcAppP groupedBinaryOps
 
 funcAppP :: Parser Char ParseError Expr
-funcAppP = leftBinOpExpr1 funcAppP' (betWs $ string ".") <|> closedP
+funcAppP = leftBinOpExpr1 funcAppP' (binaryOperatorP [funcAppBinaryOpDef]) <|> closedP
 
 funcAppP' :: Parser Char ParseError Expr
-funcAppP' = closedP <|> (toBuiltInOp <$> builtInP)
+funcAppP' = closedP <|> builtInOpP
 
 closedP :: Parser Char ParseError Expr
 closedP = (IntegerLiteral <$> literalIntegerP) <|> (Var <$> identifierP) <|> (StringLiteral <$> stringLitP) <|> parentsC exprP
@@ -174,5 +190,5 @@ stringLitP :: Parser Char ParseError String
 stringLitP = betweenC (char '"') (many $ satisfy (\x -> x /= '"' && x /= '\n')) (char '"')
 
 -- Remember to modify toBuiltInOp if builtInP is modified
-builtInP :: Parser Char ParseError String
-builtInP = binaryOperatorP builtInBinaryOperators
+builtInOpP :: Parser Char ParseError Expr
+builtInOpP = (Op . fst) <$> binaryOperatorP builtInBinaryOperators

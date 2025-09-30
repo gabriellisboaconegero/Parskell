@@ -39,9 +39,27 @@ lamb f =>
 
 test6 = """
 f. a + g. 5 == 0 && x || a - 6 * 4 && 34 == k;
-+. 4
 """
 
 test7 = """
 lamb s => lamb s_ => +. s. (+. "pedro + lucas". s_);
+"""
+
+test8 = """
+a == b ?
+  print. "foo"
+:
+  print. "bar"
+"""
+
+test9 = """
+a == b ?
+  f. a ?
+    1
+  :
+    2
+: b ?
+    print. a
+  :
+    print. b
 """
